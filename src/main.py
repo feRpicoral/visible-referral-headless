@@ -6,6 +6,7 @@ from GitHub Actions on a daily schedule.
 """
 
 import base64
+import contextlib
 import json
 import logging
 import os
@@ -30,6 +31,7 @@ USER_AGENT = (
 )
 VIEWPORT = {"width": 1280, "height": 800}
 NEW_FALLBACK_LIMIT = 25
+MAX_FEED_SCROLLS = 8
 MAX_COMMENT_SCROLLS = 40
 SCREENSHOT_DIR = Path("screenshots")
 
@@ -104,24 +106,36 @@ def find_megathread_url(page: Page) -> str | None:
         log.warning("No shreddit-post elements appeared on the subreddit page.")
         return None
 
-    # Nudge lazy-loading so we scan more than the initial paint.
-    page.evaluate("window.scrollBy(0, document.body.scrollHeight)")
-    jitter_sleep(800, 1500)
-    page.evaluate("window.scrollTo(0, 0)")
-    jitter_sleep(300, 600)
-
     posts = page.locator("shreddit-post")
-    count = min(posts.count(), NEW_FALLBACK_LIMIT)
-    log.info("Scanning %d posts for the megathread...", count)
-    for i in range(count):
-        post = posts.nth(i)
-        title = _read_post_title(post)
-        if title and TITLE_REGEX.search(title):
-            permalink = post.get_attribute("permalink") or post.get_attribute("content-href")
-            if permalink:
-                log.info("Matched megathread: %s", title)
-                return _absolute_reddit_url(permalink)
+    seen: set[str] = set()
 
+    for attempt in range(MAX_FEED_SCROLLS):
+        count = posts.count()
+        for i in range(count):
+            post = posts.nth(i)
+            title = _read_post_title(post)
+            if not title or title in seen:
+                continue
+            seen.add(title)
+            if TITLE_REGEX.search(title):
+                permalink = post.get_attribute("permalink") or post.get_attribute("content-href")
+                if permalink:
+                    log.info("Matched megathread after scanning %d titles: %s", len(seen), title)
+                    return _absolute_reddit_url(permalink)
+
+        if len(seen) >= NEW_FALLBACK_LIMIT:
+            break
+
+        page.evaluate("window.scrollBy(0, window.innerHeight * 1.5)")
+        with contextlib.suppress(PlaywrightTimeoutError):
+            page.wait_for_load_state("networkidle", timeout=4000)
+        jitter_sleep(400, 900)
+
+        new_count = posts.count()
+        if new_count == count and attempt > 0:
+            break
+
+    log.info("Scanned %d unique posts, no megathread match.", len(seen))
     return None
 
 
