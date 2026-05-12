@@ -1,0 +1,35 @@
+name: Post Visible referral
+
+on:
+  schedule:
+    - cron: "0 12 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Log the message but don't actually post"
+        type: boolean
+        default: false
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: playwright install --with-deps chromium
+      - run: python -m src.main
+        env:
+          REDDIT_STORAGE_STATE_B64: ${{ secrets.REDDIT_STORAGE_STATE_B64 }}
+          REDDIT_USERNAME: ${{ secrets.REDDIT_USERNAME }}
+          REFERRAL_CODE: ${{ secrets.REFERRAL_CODE }}
+          DRY_RUN: ${{ inputs.dry_run && '1' || '' }}
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: failure-screenshots
+          path: screenshots/
+          if-no-files-found: ignore
