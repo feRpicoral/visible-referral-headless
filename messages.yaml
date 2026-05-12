@@ -1,0 +1,109 @@
+# Templates use {code} and {link} placeholders.
+# Add, remove, or rewrite freely — the bot picks one at random per post.
+templates:
+  - |
+    ## 💸 $20 OFF Visible — Code Below ⬇️
+
+    |     |     |
+    | --- | --- |
+    | 🎟️ **Code** | **`{code}`** |
+    | 🔗 **Link** | {link} |
+
+    We **both** save $20. Cheers! 🎉
+
+  - |
+    # 🚀 Visible Referral — Save $20!
+
+    > Use code **`{code}`** at signup
+
+    👉 [Tap here to activate]({link})
+
+    Thanks so much! 💜
+
+  - |
+    Hey! 👋 Here's a Visible referral if you need one:
+
+    - 🎟️ **Code:** `{code}`
+    - 🔗 **Link:** {link}
+    - 💵 **Savings:** $20 for you, $20 for me
+
+    Appreciate it! 🙏
+
+  - |
+    ### ✨ $20 off Visible ✨
+
+    Use code **`{code}`** when signing up:
+
+    🔗 {link}
+
+    Win-win — we both save. Thanks! 🤝
+
+  - |
+    📱 **Visible referral** — $20 off your first month:
+
+    - Code: **`{code}`**
+    - Link: {link}
+
+    Much appreciated! 💜
+
+  - |
+    ## 🎁 $20 off Visible in 3 steps
+
+    1. 🌐 Visit → {link}
+    2. ⌨️ Apply code → **`{code}`**
+    3. 🎉 Save **$20** on month one
+
+    Thanks if you go with mine!
+
+  - |
+    > # 💜 Visible Referral
+    >
+    > Code: **`{code}`**
+    >
+    > [Activate $20 off]({link})
+
+    Welcome to the network! 👋
+
+  - |
+    | 💸 $20 OFF | Visible Referral |
+    | :-: | :-: |
+    | 🎟️ Code | **`{code}`** |
+    | 🔗 Link | {link} |
+
+    Thanks in advance! 🙏
+
+  - |
+    💜 **Visible referral:** **`{code}`**
+
+    🔗 {link}
+
+    $20 off — we both win! ✨
+
+  - |
+    ### 👋 Been on Visible for a while — here's my code if it helps:
+
+    - 🎟️ **`{code}`**
+    - 🔗 {link}
+
+    $20 off for new sign-ups. Welcome aboard! 🌐💜
+
+  - |
+    ---
+
+    ## 💰 $20 Visible Referral
+
+    - **Code →** **`{code}`**
+    - **Link →** {link}
+
+    ---
+
+    Thanks for considering! 🙌
+
+  - |
+    ### 📲 Visible referral inside ⬇️
+
+    > **Code:** **`{code}`**
+    >
+    > **Link:** {link}
+
+    Pays $20 to both of us — much appreciated! ✨
