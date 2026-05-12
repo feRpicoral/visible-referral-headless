@@ -32,7 +32,7 @@ USER_AGENT = (
 VIEWPORT = {"width": 1280, "height": 800}
 NEW_FALLBACK_LIMIT = 25
 MAX_FEED_SCROLLS = 8
-MAX_COMMENT_SCROLLS = 40
+USER_COMMENTS_FETCH_LIMIT = 100
 SCREENSHOT_DIR = Path("screenshots")
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -157,22 +157,35 @@ def _absolute_reddit_url(path_or_url: str) -> str:
     return f"https://www.reddit.com{path_or_url}"
 
 
-def has_user_commented(page: Page, username: str) -> bool:
-    selector = f'shreddit-comment[author="{username}" i]'
-    for _ in range(MAX_COMMENT_SCROLLS):
-        if page.locator(selector).count() > 0:
-            log.info("Already commented as u/%s on this megathread.", username)
+def extract_post_id(megathread_url: str) -> str:
+    after = megathread_url.split("/comments/", 1)[1]
+    return after.split("/", 1)[0]
+
+
+def has_user_commented(page: Page, username: str, megathread_post_id: str) -> bool:
+    url = (
+        f"https://www.reddit.com/user/{username}/comments.json"
+        f"?limit={USER_COMMENTS_FETCH_LIMIT}&sort=new"
+    )
+    response = page.context.request.get(url)
+    if not response.ok:
+        raise RuntimeError(f"Failed to fetch user comments JSON ({url}): HTTP {response.status}")
+
+    data = response.json()
+    children = data.get("data", {}).get("children", [])
+    target_link_id = f"t3_{megathread_post_id}"
+    for child in children:
+        cdata = child.get("data", {})
+        if cdata.get("link_id") == target_link_id:
+            permalink = cdata.get("permalink", "")
+            log.info("Already commented on this megathread: https://www.reddit.com%s", permalink)
             return True
-        page.evaluate("window.scrollBy(0, document.body.clientHeight)")
-        jitter_sleep(500, 1200)
-        at_bottom = page.evaluate(
-            "window.scrollY + window.innerHeight >= document.body.scrollHeight - 10"
-        )
-        if at_bottom:
-            if page.locator(selector).count() > 0:
-                log.info("Already commented as u/%s on this megathread.", username)
-                return True
-            break
+
+    log.info(
+        "No prior comment on this megathread (scanned %d of u/%s's recent comments).",
+        len(children),
+        username,
+    )
     return False
 
 
@@ -231,7 +244,12 @@ def main() -> int:
                 log.info("No megathread found on r/Visible, nothing to do.")
                 return 0
 
-            log.info("Found megathread: %s", megathread_url)
+            megathread_id = extract_post_id(megathread_url)
+            log.info("Found megathread: %s (id=%s)", megathread_url, megathread_id)
+
+            if has_user_commented(page, username, megathread_id):
+                return 0
+
             page.goto(megathread_url, wait_until="domcontentloaded")
             jitter_sleep()
 
@@ -239,9 +257,6 @@ def main() -> int:
                 take_screenshot(page, "captcha")
                 log.error("CAPTCHA challenge detected — bailing.")
                 return 1
-
-            if has_user_commented(page, username):
-                return 0
 
             body = select_message(templates, code, link)
 

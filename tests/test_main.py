@@ -15,6 +15,7 @@ import pytest
 from src.main import (
     TITLE_REGEX,
     decode_storage_state,
+    extract_post_id,
     require_env,
     select_message,
 )
@@ -125,3 +126,29 @@ def test_select_message_is_deterministic_with_seeded_random():
     random.seed(42)
     second = select_message(templates, "X", "Y")
     assert first == second
+
+
+# ---------------------------------------------------------------------------
+# extract_post_id
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "url,expected",
+    [
+        (
+            "https://www.reddit.com/r/Visible/comments/1ta46qu/biweekly_megathread_for_referral_codes_please/",
+            "1ta46qu",
+        ),
+        (
+            "https://www.reddit.com/r/Visible/comments/1ta46qu/",
+            "1ta46qu",
+        ),
+        (
+            "https://www.reddit.com/r/Visible/comments/abc123/some_post_slug",
+            "abc123",
+        ),
+    ],
+)
+def test_extract_post_id(url, expected):
+    assert extract_post_id(url) == expected
