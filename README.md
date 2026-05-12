@@ -5,7 +5,7 @@ A GitHub-Actions-powered bot that posts your **Visible** referral code as a comm
 It drives the regular Reddit web UI in headless Chromium via [Playwright](https://playwright.dev/python/), authenticated by a `storage_state.json` you capture once locally. This is the fallback for the [API-based bot](https://github.com/feRpicoral/visible-referral-bot) for accounts that haven't been approved under Reddit's 2025 Responsible Builder Policy.
 
 - Runs daily on a free GitHub Actions cron (12:00 UTC).
-- Idempotent: if you've already commented on the open megathread, it does nothing.
+- Idempotent: before posting, the bot fetches your recent comments via Reddit's public read-only JSON endpoint (no OAuth, no app approval) and bails if you've already commented on the current megathread. This works even when the megathread is in contest mode, which randomizes comment ordering and makes a DOM scan unreliable.
 - Picks a different message template each time from `messages.yaml`.
 - Failure screenshots are uploaded as a workflow artifact so you can diagnose CAPTCHAs, expired sessions, or UI drift after the fact.
 
@@ -79,6 +79,8 @@ python -m src.main
 
 The bot will find the megathread, check whether you've already commented, then log the message it would post and exit 0 without posting.
 
+If you don't have Playwright's bundled Chromium installed (e.g. you skipped `playwright install chromium`), set `PLAYWRIGHT_CHROMIUM_CHANNEL=chrome` to launch your system's Google Chrome instead. Same for `msedge` if you'd rather use Edge.
+
 ## How it runs in CI
 
 - **Daily cron:** 12:00 UTC, via `.github/workflows/post-referral.yml`.
@@ -101,7 +103,8 @@ Then update the `REDDIT_STORAGE_STATE_B64` secret on GitHub with the new value.
 - **CAPTCHA challenge detected.** The session may be flagged. Re-capture from a different IP if you can, or just wait and re-run.
 - **Session expired (`Reddit redirected to login`).** Re-run `capture_session.py` and update the secret.
 - **No megathread found.** r/Visible may have temporarily un-stickied the thread, or the title wording changed. Compare the live title against `TITLE_REGEX` in `src/main.py` and open a PR to update the regex if needed.
-- **Playwright timeout / locator not found.** Reddit changed something in the UI. The locators in `src/main.py` (composer textbox, submit button, Markdown toggle, `shreddit-post` post-title slot) likely need updating. Failure screenshots in the workflow artifact will show what the page actually looked like.
+- **`Failed to fetch user comments JSON: HTTP 4xx/5xx`.** Reddit's public JSON endpoint is being rate-limited or returned an error for your account. Usually transient — re-run later. If persistent, the endpoint may have changed; check `https://www.reddit.com/user/YOUR_USERNAME/comments.json` in a browser.
+- **Playwright timeout / locator not found.** Reddit changed something in the UI. The locators in `src/main.py` (`shreddit-post` `post-title` attribute on the subreddit feed, composer textbox, submit button, Markdown toggle on the post page) likely need updating. Failure screenshots in the workflow artifact will show what the page actually looked like.
 
 ## Code quality
 
