@@ -1,14 +1,14 @@
 name: Post Visible referral
 
 on:
-  schedule:
-    - cron: "0 12 * * *"
   workflow_dispatch:
     inputs:
       dry_run:
         description: "Log the message but don't actually post"
         type: boolean
         default: false
+  schedule:
+    - cron: "0 12 * * *"
 
 jobs:
   post:
