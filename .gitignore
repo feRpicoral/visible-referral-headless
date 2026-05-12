@@ -1,0 +1,10 @@
+.env
+.venv/
+venv/
+__pycache__/
+*.pyc
+.ruff_cache/
+.DS_Store
+storage_state.json
+screenshots/
+*.png
