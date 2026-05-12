@@ -144,9 +144,9 @@ def _absolute_reddit_url(path_or_url: str) -> str:
 
 
 def has_user_commented(page: Page, username: str) -> bool:
-    target = re.compile(rf"^/?u/{re.escape(username)}/?$", re.I)
+    selector = f'shreddit-comment[author="{username}" i]'
     for _ in range(MAX_COMMENT_SCROLLS):
-        if page.get_by_role("link", name=target).count() > 0:
+        if page.locator(selector).count() > 0:
             log.info("Already commented as u/%s on this megathread.", username)
             return True
         page.evaluate("window.scrollBy(0, document.body.clientHeight)")
@@ -155,7 +155,7 @@ def has_user_commented(page: Page, username: str) -> bool:
             "window.scrollY + window.innerHeight >= document.body.scrollHeight - 10"
         )
         if at_bottom:
-            if page.get_by_role("link", name=target).count() > 0:
+            if page.locator(selector).count() > 0:
                 log.info("Already commented as u/%s on this megathread.", username)
                 return True
             break
@@ -200,7 +200,11 @@ def main() -> int:
         return 1
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
+        launch_kwargs: dict = {"headless": True}
+        channel = os.environ.get("PLAYWRIGHT_CHROMIUM_CHANNEL")
+        if channel:
+            launch_kwargs["channel"] = channel
+        browser = p.chromium.launch(**launch_kwargs)
         context = browser.new_context(
             storage_state=storage_state,
             user_agent=USER_AGENT,
