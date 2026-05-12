@@ -93,46 +93,48 @@ def check_for_captcha(page: Page) -> bool:
 
 def find_megathread_url(page: Page) -> str | None:
     page.goto(SUBREDDIT_URL, wait_until="domcontentloaded")
-    jitter_sleep()
 
     if page.url.startswith(LOGIN_URL_PREFIX):
         log.error("Reddit redirected to login — storage_state is expired or invalid.")
         raise SessionExpiredError
 
-    posts = page.locator("shreddit-post")
-    pinned = posts.filter(has=page.get_by_text("Pinned", exact=False))
-    pinned_count = pinned.count()
-    for i in range(pinned_count):
-        post = pinned.nth(i)
-        title = _read_post_title(post)
-        if title and TITLE_REGEX.search(title):
-            permalink = post.get_attribute("permalink") or post.get_attribute("content-href")
-            if permalink:
-                log.info("Matched pinned megathread: %s", title)
-                return _absolute_reddit_url(permalink)
+    try:
+        page.wait_for_selector("shreddit-post", timeout=15000)
+    except PlaywrightTimeoutError:
+        log.warning("No shreddit-post elements appeared on the subreddit page.")
+        return None
 
+    # Nudge lazy-loading so we scan more than the initial paint.
+    page.evaluate("window.scrollBy(0, document.body.scrollHeight)")
+    jitter_sleep(800, 1500)
+    page.evaluate("window.scrollTo(0, 0)")
+    jitter_sleep(300, 600)
+
+    posts = page.locator("shreddit-post")
     count = min(posts.count(), NEW_FALLBACK_LIMIT)
-    log.info("Pinned scan didn't match; scanning first %d posts...", count)
+    log.info("Scanning %d posts for the megathread...", count)
     for i in range(count):
         post = posts.nth(i)
         title = _read_post_title(post)
         if title and TITLE_REGEX.search(title):
             permalink = post.get_attribute("permalink") or post.get_attribute("content-href")
             if permalink:
-                log.info("Matched recent megathread: %s", title)
+                log.info("Matched megathread: %s", title)
                 return _absolute_reddit_url(permalink)
 
     return None
 
 
 def _read_post_title(post) -> str | None:
+    title = post.get_attribute("post-title")
+    if title and title.strip():
+        return title.strip()
     title_loc = post.locator('[slot="title"]').first
     if title_loc.count() > 0:
         text = title_loc.inner_text().strip()
         if text:
             return text
-    aria = post.get_attribute("aria-label") or post.get_attribute("post-title")
-    return aria.strip() if aria else None
+    return None
 
 
 def _absolute_reddit_url(path_or_url: str) -> str:
