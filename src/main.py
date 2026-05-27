@@ -191,23 +191,37 @@ def has_user_commented(page: Page, username: str, megathread_post_id: str) -> bo
     return False
 
 
-COMPOSER_LABEL_REGEX = re.compile(r"(comment|conversation)", re.I)
-COMPOSER_PLACEHOLDER_REGEX = re.compile(r"(add a comment|join the conversation)", re.I)
+INLINE_COMPOSER_TRIGGER_SELECTOR = (
+    'comment-composer-host faceplate-textarea-input[data-testid="trigger-button"]'
+)
 
 
-def find_composer(page: Page):
-    by_placeholder = page.get_by_placeholder(COMPOSER_PLACEHOLDER_REGEX)
-    by_role = page.get_by_role("textbox", name=COMPOSER_LABEL_REGEX)
-    return by_placeholder.or_(by_role).first
+def open_composer(page: Page):
+    """Click the inline comment entry-point and return the expanded composer.
+
+    The megathread page has three placeholder-matching elements: a hidden
+    duplicate trigger, the inline visible trigger (the one we want), and the
+    top-bar Create entry that navigates to /submit. Scoping the selector to
+    comment-composer-host picks the right one. Raises if the click somehow
+    navigates away or the inline composer doesn't appear.
+    """
+    entry = page.locator(INLINE_COMPOSER_TRIGGER_SELECTOR).first
+    entry.wait_for(state="visible", timeout=15000)
+    url_before = page.url
+    entry.click()
+    jitter_sleep()
+    if page.url != url_before:
+        raise RuntimeError(f"Comment entry navigated to {page.url} instead of expanding inline.")
+    composer = page.locator("shreddit-composer").first
+    composer.wait_for(state="visible", timeout=10000)
+    return composer
 
 
 def post_comment(page: Page, body: str, code: str) -> None:
-    composer = find_composer(page)
-    composer.click()
-    jitter_sleep()
+    composer = open_composer(page)
 
-    markdown_toggle = page.get_by_role("button", name=re.compile("markdown", re.I)).first
-    if markdown_toggle.count() > 0:
+    markdown_toggle = page.get_by_role("button", name=re.compile("switch to markdown", re.I)).first
+    if markdown_toggle.count() > 0 and markdown_toggle.is_visible():
         markdown_toggle.click()
         jitter_sleep()
 
@@ -271,9 +285,8 @@ def main() -> int:
             body = select_message(templates, code, link)
 
             if dry_run:
-                composer = find_composer(page)
-                composer.wait_for(state="visible", timeout=15000)
-                log.info("DRY RUN — composer located. Would post:\n%s", body)
+                open_composer(page)
+                log.info("DRY RUN — composer expanded inline. Would post:\n%s", body)
                 return 0
 
             post_comment(page, body, code)
