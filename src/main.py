@@ -229,6 +229,18 @@ def wait_for_submitted_comment(
 INLINE_COMPOSER_TRIGGER_SELECTOR = (
     'comment-composer-host faceplate-textarea-input[data-testid="trigger-button"]'
 )
+SHOW_FORMATTING_OPTIONS_REGEX = re.compile("show formatting options", re.I)
+MORE_OPTIONS_REGEX = re.compile("more options", re.I)
+SWITCH_TO_MARKDOWN_REGEX = re.compile("switch to markdown", re.I)
+SWITCH_TO_RICH_TEXT_REGEX = re.compile("switch to rich text", re.I)
+
+
+def _first_visible(locator):
+    for i in range(locator.count()):
+        candidate = locator.nth(i)
+        if candidate.is_visible():
+            return candidate
+    return None
 
 
 def open_composer(page: Page):
@@ -252,13 +264,40 @@ def open_composer(page: Page):
     return composer
 
 
-def post_comment(page: Page, body: str, username: str, megathread_post_id: str) -> None:
-    composer = open_composer(page)
+def switch_to_markdown_editor(page: Page):
+    if _first_visible(page.get_by_text(SWITCH_TO_RICH_TEXT_REGEX)) is not None:
+        return page.locator("shreddit-composer").first
 
-    markdown_toggle = page.get_by_role("button", name=re.compile("switch to markdown", re.I)).first
-    if markdown_toggle.count() > 0 and markdown_toggle.is_visible():
-        markdown_toggle.click()
+    formatting_options = page.get_by_role("button", name=SHOW_FORMATTING_OPTIONS_REGEX).first
+    if formatting_options.count() > 0 and formatting_options.is_visible():
+        formatting_options.click()
         jitter_sleep()
+
+    markdown_switch = _first_visible(page.get_by_role("button", name=SWITCH_TO_MARKDOWN_REGEX))
+    if markdown_switch is None:
+        more_options = _first_visible(page.get_by_role("button", name=MORE_OPTIONS_REGEX))
+        if more_options is not None:
+            more_options.click()
+            jitter_sleep()
+        markdown_switch = _first_visible(
+            page.locator("rpl-menu-item", has_text=SWITCH_TO_MARKDOWN_REGEX)
+        )
+
+    if markdown_switch is None:
+        raise RuntimeError("Could not find Reddit's Switch to Markdown control.")
+
+    markdown_switch.click()
+    page.locator("shreddit-composer textarea").first.wait_for(state="visible", timeout=10000)
+    return page.locator("shreddit-composer").first
+
+
+def prepare_comment_composer(page: Page):
+    open_composer(page)
+    return switch_to_markdown_editor(page)
+
+
+def post_comment(page: Page, body: str, username: str, megathread_post_id: str) -> None:
+    composer = prepare_comment_composer(page)
 
     composer.press_sequentially(body, delay=random.randint(20, 60))
     jitter_sleep(400, 900)
@@ -319,8 +358,8 @@ def main() -> int:
             body = select_message(templates, code, link)
 
             if dry_run:
-                open_composer(page)
-                log.info("DRY RUN — composer expanded inline. Would post:\n%s", body)
+                prepare_comment_composer(page)
+                log.info("DRY RUN — composer expanded in Markdown mode. Would post:\n%s", body)
                 return 0
 
             post_comment(page, body, username, megathread_id)
