@@ -33,6 +33,8 @@ VIEWPORT = {"width": 1280, "height": 800}
 NEW_FALLBACK_LIMIT = 25
 MAX_FEED_SCROLLS = 8
 USER_COMMENTS_FETCH_LIMIT = 100
+POST_SUBMIT_VERIFY_TIMEOUT_SECONDS = 30
+POST_SUBMIT_VERIFY_POLL_SECONDS = 2
 SCREENSHOT_DIR = Path("screenshots")
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -164,7 +166,7 @@ def extract_post_id(megathread_url: str) -> str:
     return after.split("/", 1)[0]
 
 
-def has_user_commented(page: Page, username: str, megathread_post_id: str) -> bool:
+def _fetch_recent_user_comments(page: Page, username: str) -> list[dict]:
     url = (
         f"https://www.reddit.com/user/{username}/comments.json"
         f"?limit={USER_COMMENTS_FETCH_LIMIT}&sort=new"
@@ -174,14 +176,24 @@ def has_user_commented(page: Page, username: str, megathread_post_id: str) -> bo
         raise RuntimeError(f"Failed to fetch user comments JSON ({url}): HTTP {response.status}")
 
     data = response.json()
-    children = data.get("data", {}).get("children", [])
+    return data.get("data", {}).get("children", [])
+
+
+def _comment_permalink_for_megathread(children: list[dict], megathread_post_id: str) -> str | None:
     target_link_id = f"t3_{megathread_post_id}"
     for child in children:
         cdata = child.get("data", {})
         if cdata.get("link_id") == target_link_id:
-            permalink = cdata.get("permalink", "")
-            log.info("Already commented on this megathread: https://www.reddit.com%s", permalink)
-            return True
+            return cdata.get("permalink", "")
+    return None
+
+
+def has_user_commented(page: Page, username: str, megathread_post_id: str) -> bool:
+    children = _fetch_recent_user_comments(page, username)
+    permalink = _comment_permalink_for_megathread(children, megathread_post_id)
+    if permalink is not None:
+        log.info("Already commented on this megathread: https://www.reddit.com%s", permalink)
+        return True
 
     log.info(
         "No prior comment on this megathread (scanned %d of u/%s's recent comments).",
@@ -189,6 +201,29 @@ def has_user_commented(page: Page, username: str, megathread_post_id: str) -> bo
         username,
     )
     return False
+
+
+def wait_for_submitted_comment(
+    page: Page,
+    username: str,
+    megathread_post_id: str,
+    timeout_seconds: int = POST_SUBMIT_VERIFY_TIMEOUT_SECONDS,
+    poll_seconds: int = POST_SUBMIT_VERIFY_POLL_SECONDS,
+) -> None:
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        children = _fetch_recent_user_comments(page, username)
+        permalink = _comment_permalink_for_megathread(children, megathread_post_id)
+        if permalink is not None:
+            log.info("Comment posted: https://www.reddit.com%s", permalink)
+            return
+
+        remaining_seconds = deadline - time.monotonic()
+        if remaining_seconds <= 0:
+            raise RuntimeError(
+                f"Submitted comment did not appear in u/{username}'s recent comments."
+            )
+        time.sleep(min(poll_seconds, remaining_seconds))
 
 
 INLINE_COMPOSER_TRIGGER_SELECTOR = (
@@ -217,7 +252,7 @@ def open_composer(page: Page):
     return composer
 
 
-def post_comment(page: Page, body: str, code: str) -> None:
+def post_comment(page: Page, body: str, username: str, megathread_post_id: str) -> None:
     composer = open_composer(page)
 
     markdown_toggle = page.get_by_role("button", name=re.compile("switch to markdown", re.I)).first
@@ -231,8 +266,7 @@ def post_comment(page: Page, body: str, code: str) -> None:
     submit = page.get_by_role("button", name=re.compile(r"^(Comment|Post)$", re.I)).first
     submit.click()
 
-    page.wait_for_selector(f'text="{code}"', timeout=15000)
-    log.info("Comment posted; referral code visible in the page.")
+    wait_for_submitted_comment(page, username, megathread_post_id)
 
 
 def main() -> int:
@@ -289,7 +323,7 @@ def main() -> int:
                 log.info("DRY RUN — composer expanded inline. Would post:\n%s", body)
                 return 0
 
-            post_comment(page, body, code)
+            post_comment(page, body, username, megathread_id)
             log.info("Done.")
             return 0
         except SessionExpiredError:

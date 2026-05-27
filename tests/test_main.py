@@ -1,7 +1,7 @@
-"""Tests for pure helpers in src.main.
+"""Tests for helpers in src.main.
 
-DOM-touching helpers (find_megathread_url, has_user_commented, post_comment,
-check_for_captcha, take_screenshot) are exercised end-to-end via
+Browser-driving helpers (find_megathread_url, post_comment, check_for_captcha,
+take_screenshot) are exercised end-to-end via
 `DRY_RUN=1 python -m src.main` rather than mocked here.
 """
 
@@ -16,9 +16,50 @@ from src.main import (
     TITLE_REGEX,
     decode_storage_state,
     extract_post_id,
+    has_user_commented,
     require_env,
     select_message,
+    wait_for_submitted_comment,
 )
+
+
+class FakeResponse:
+    def __init__(self, payload, status=200):
+        self._payload = payload
+        self.status = status
+        self.ok = status < 400
+
+    def json(self):
+        return self._payload
+
+
+class FakeRequest:
+    def __init__(self, payloads):
+        self.payloads = list(payloads)
+        self.urls = []
+
+    def get(self, url):
+        self.urls.append(url)
+        return FakeResponse(self.payloads.pop(0))
+
+
+class FakeContext:
+    def __init__(self, payloads):
+        self.request = FakeRequest(payloads)
+
+
+class FakePage:
+    def __init__(self, payloads):
+        self.context = FakeContext(payloads)
+
+
+def comments_payload(*children):
+    return {"data": {"children": list(children)}}
+
+
+def comment_child(link_id="t3_abc123", permalink="/r/Visible/comments/abc123/thread/def456/"):
+    return {"data": {"link_id": link_id, "permalink": permalink}}
+
 
 # ---------------------------------------------------------------------------
 # TITLE_REGEX
@@ -152,3 +193,53 @@ def test_select_message_is_deterministic_with_seeded_random():
 )
 def test_extract_post_id(url, expected):
     assert extract_post_id(url) == expected
+
+
+def test_has_user_commented_detects_existing_megathread_comment():
+    page = FakePage([comments_payload(comment_child())])
+
+    result = has_user_commented(page, "fpicoral", "abc123")
+
+    assert result is True
+    assert len(page.context.request.urls) == 1
+
+
+def test_has_user_commented_ignores_comments_on_other_posts():
+    page = FakePage([comments_payload(comment_child(link_id="t3_other"))])
+
+    result = has_user_commented(page, "fpicoral", "abc123")
+
+    assert result is False
+    assert len(page.context.request.urls) == 1
+
+
+def test_wait_for_submitted_comment_polls_until_comment_appears():
+    page = FakePage(
+        [
+            comments_payload(),
+            comments_payload(comment_child()),
+        ]
+    )
+
+    wait_for_submitted_comment(
+        page,
+        "fpicoral",
+        "abc123",
+        timeout_seconds=1,
+        poll_seconds=0,
+    )
+
+    assert len(page.context.request.urls) == 2
+
+
+def test_wait_for_submitted_comment_fails_when_comment_never_appears():
+    page = FakePage([comments_payload()])
+
+    with pytest.raises(RuntimeError, match="Submitted comment did not appear"):
+        wait_for_submitted_comment(
+            page,
+            "fpicoral",
+            "abc123",
+            timeout_seconds=0,
+            poll_seconds=0,
+        )
