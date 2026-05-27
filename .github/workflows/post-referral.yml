@@ -24,8 +24,8 @@ jobs:
       - run: python -m src.main
         env:
           REDDIT_STORAGE_STATE_B64: ${{ secrets.REDDIT_STORAGE_STATE_B64 }}
-          REDDIT_USERNAME: ${{ secrets.REDDIT_USERNAME }}
-          REFERRAL_CODE: ${{ secrets.REFERRAL_CODE }}
+          REDDIT_USERNAME: ${{ vars.REDDIT_USERNAME }}
+          REFERRAL_CODE: ${{ vars.REFERRAL_CODE }}
           DRY_RUN: ${{ inputs.dry_run && '1' || '' }}
       - uses: actions/upload-artifact@v4
         if: failure()

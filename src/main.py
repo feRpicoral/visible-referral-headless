@@ -82,10 +82,12 @@ def take_screenshot(page: Page, name: str) -> Path:
 
 
 def check_for_captcha(page: Page) -> bool:
+    # Reddit preloads an invisible reCAPTCHA anchor iframe on every page, so we
+    # have to exclude it; otherwise this check fires on a normal page load.
     selectors = [
-        'iframe[src*="recaptcha"]',
-        'iframe[src*="captcha"]',
-        'iframe[title*="captcha" i]',
+        'iframe[src*="recaptcha"]:not([src*="size=invisible"])',
+        'iframe[src*="captcha"]:not([src*="recaptcha"])',
+        'iframe[title*="captcha" i]:not([title="reCAPTCHA"])',
     ]
     for selector in selectors:
         if page.locator(selector).count() > 0:
@@ -189,10 +191,18 @@ def has_user_commented(page: Page, username: str, megathread_post_id: str) -> bo
     return False
 
 
+COMPOSER_LABEL_REGEX = re.compile(r"(comment|conversation)", re.I)
+COMPOSER_PLACEHOLDER_REGEX = re.compile(r"(add a comment|join the conversation)", re.I)
+
+
+def find_composer(page: Page):
+    by_placeholder = page.get_by_placeholder(COMPOSER_PLACEHOLDER_REGEX)
+    by_role = page.get_by_role("textbox", name=COMPOSER_LABEL_REGEX)
+    return by_placeholder.or_(by_role).first
+
+
 def post_comment(page: Page, body: str, code: str) -> None:
-    composer = page.get_by_role("textbox", name=re.compile("comment", re.I)).first
-    if composer.count() == 0:
-        composer = page.get_by_placeholder(re.compile("Add a comment", re.I)).first
+    composer = find_composer(page)
     composer.click()
     jitter_sleep()
 
@@ -261,7 +271,9 @@ def main() -> int:
             body = select_message(templates, code, link)
 
             if dry_run:
-                log.info("DRY RUN — would post:\n%s", body)
+                composer = find_composer(page)
+                composer.wait_for(state="visible", timeout=15000)
+                log.info("DRY RUN — composer located. Would post:\n%s", body)
                 return 0
 
             post_comment(page, body, code)
