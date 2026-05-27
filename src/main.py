@@ -33,6 +33,8 @@ VIEWPORT = {"width": 1280, "height": 800}
 NEW_FALLBACK_LIMIT = 25
 MAX_FEED_SCROLLS = 8
 USER_COMMENTS_FETCH_LIMIT = 100
+POST_SUBMIT_VERIFY_TIMEOUT_SECONDS = 120
+POST_SUBMIT_VERIFY_POLL_SECONDS = 5
 SCREENSHOT_DIR = Path("screenshots")
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -164,7 +166,7 @@ def extract_post_id(megathread_url: str) -> str:
     return after.split("/", 1)[0]
 
 
-def has_user_commented(page: Page, username: str, megathread_post_id: str) -> bool:
+def _fetch_recent_user_comments(page: Page, username: str) -> list[dict]:
     url = (
         f"https://www.reddit.com/user/{username}/comments.json"
         f"?limit={USER_COMMENTS_FETCH_LIMIT}&sort=new"
@@ -174,14 +176,24 @@ def has_user_commented(page: Page, username: str, megathread_post_id: str) -> bo
         raise RuntimeError(f"Failed to fetch user comments JSON ({url}): HTTP {response.status}")
 
     data = response.json()
-    children = data.get("data", {}).get("children", [])
+    return data.get("data", {}).get("children", [])
+
+
+def _comment_permalink_for_megathread(children: list[dict], megathread_post_id: str) -> str | None:
     target_link_id = f"t3_{megathread_post_id}"
     for child in children:
         cdata = child.get("data", {})
         if cdata.get("link_id") == target_link_id:
-            permalink = cdata.get("permalink", "")
-            log.info("Already commented on this megathread: https://www.reddit.com%s", permalink)
-            return True
+            return cdata.get("permalink", "")
+    return None
+
+
+def has_user_commented(page: Page, username: str, megathread_post_id: str) -> bool:
+    children = _fetch_recent_user_comments(page, username)
+    permalink = _comment_permalink_for_megathread(children, megathread_post_id)
+    if permalink is not None:
+        log.info("Already commented on this megathread: https://www.reddit.com%s", permalink)
+        return True
 
     log.info(
         "No prior comment on this megathread (scanned %d of u/%s's recent comments).",
@@ -191,9 +203,44 @@ def has_user_commented(page: Page, username: str, megathread_post_id: str) -> bo
     return False
 
 
+def wait_for_submitted_comment(
+    page: Page,
+    username: str,
+    megathread_post_id: str,
+    timeout_seconds: int = POST_SUBMIT_VERIFY_TIMEOUT_SECONDS,
+    poll_seconds: int = POST_SUBMIT_VERIFY_POLL_SECONDS,
+) -> None:
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        children = _fetch_recent_user_comments(page, username)
+        permalink = _comment_permalink_for_megathread(children, megathread_post_id)
+        if permalink is not None:
+            log.info("Comment posted: https://www.reddit.com%s", permalink)
+            return
+
+        remaining_seconds = deadline - time.monotonic()
+        if remaining_seconds <= 0:
+            raise RuntimeError(
+                f"Submitted comment did not appear in u/{username}'s recent comments."
+            )
+        time.sleep(min(poll_seconds, remaining_seconds))
+
+
 INLINE_COMPOSER_TRIGGER_SELECTOR = (
     'comment-composer-host faceplate-textarea-input[data-testid="trigger-button"]'
 )
+SHOW_FORMATTING_OPTIONS_REGEX = re.compile("show formatting options", re.I)
+MORE_OPTIONS_REGEX = re.compile("more options", re.I)
+SWITCH_TO_MARKDOWN_REGEX = re.compile("switch to markdown", re.I)
+SWITCH_TO_RICH_TEXT_REGEX = re.compile("switch to rich text", re.I)
+
+
+def _first_visible(locator):
+    for i in range(locator.count()):
+        candidate = locator.nth(i)
+        if candidate.is_visible():
+            return candidate
+    return None
 
 
 def open_composer(page: Page):
@@ -217,13 +264,40 @@ def open_composer(page: Page):
     return composer
 
 
-def post_comment(page: Page, body: str, code: str) -> None:
-    composer = open_composer(page)
+def switch_to_markdown_editor(page: Page):
+    if _first_visible(page.get_by_text(SWITCH_TO_RICH_TEXT_REGEX)) is not None:
+        return page.locator("shreddit-composer").first
 
-    markdown_toggle = page.get_by_role("button", name=re.compile("switch to markdown", re.I)).first
-    if markdown_toggle.count() > 0 and markdown_toggle.is_visible():
-        markdown_toggle.click()
+    formatting_options = page.get_by_role("button", name=SHOW_FORMATTING_OPTIONS_REGEX).first
+    if formatting_options.count() > 0 and formatting_options.is_visible():
+        formatting_options.click()
         jitter_sleep()
+
+    markdown_switch = _first_visible(page.get_by_role("button", name=SWITCH_TO_MARKDOWN_REGEX))
+    if markdown_switch is None:
+        more_options = _first_visible(page.get_by_role("button", name=MORE_OPTIONS_REGEX))
+        if more_options is not None:
+            more_options.click()
+            jitter_sleep()
+        markdown_switch = _first_visible(
+            page.locator("rpl-menu-item", has_text=SWITCH_TO_MARKDOWN_REGEX)
+        )
+
+    if markdown_switch is None:
+        raise RuntimeError("Could not find Reddit's Switch to Markdown control.")
+
+    markdown_switch.click()
+    page.locator("shreddit-composer textarea").first.wait_for(state="visible", timeout=10000)
+    return page.locator("shreddit-composer").first
+
+
+def prepare_comment_composer(page: Page):
+    open_composer(page)
+    return switch_to_markdown_editor(page)
+
+
+def post_comment(page: Page, body: str, username: str, megathread_post_id: str) -> None:
+    composer = prepare_comment_composer(page)
 
     composer.press_sequentially(body, delay=random.randint(20, 60))
     jitter_sleep(400, 900)
@@ -231,8 +305,7 @@ def post_comment(page: Page, body: str, code: str) -> None:
     submit = page.get_by_role("button", name=re.compile(r"^(Comment|Post)$", re.I)).first
     submit.click()
 
-    page.wait_for_selector(f'text="{code}"', timeout=15000)
-    log.info("Comment posted; referral code visible in the page.")
+    wait_for_submitted_comment(page, username, megathread_post_id)
 
 
 def main() -> int:
@@ -285,11 +358,11 @@ def main() -> int:
             body = select_message(templates, code, link)
 
             if dry_run:
-                open_composer(page)
-                log.info("DRY RUN — composer expanded inline. Would post:\n%s", body)
+                prepare_comment_composer(page)
+                log.info("DRY RUN — composer expanded in Markdown mode. Would post:\n%s", body)
                 return 0
 
-            post_comment(page, body, code)
+            post_comment(page, body, username, megathread_id)
             log.info("Done.")
             return 0
         except SessionExpiredError:
